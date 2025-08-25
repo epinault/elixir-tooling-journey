@@ -1,0 +1,73 @@
+#! /usr/bin/env elixir
+
+Mix.install([
+  {:jason, "~> 1.2"},
+  {:owl, "~> 0.3"},
+  {:tesla, "~> 1.4"},
+  {:hackney, "~> 1.13"}
+])
+
+Logger.configure(level: :info)
+
+Code.require_file("generic_runner.ex")
+
+otp_version = "27.1.1"
+elixir_version =  "1.17.3"
+docker_image = "elixir:1.17.3"
+
+defmodule UpgradeRunner do
+  use GenericRunner
+
+  def run_upgrade(upgrade) do
+
+    # update .tools-version
+    content = """
+    erlang #{upgrade[:extra_details][:otp_version]}
+    elixir #{upgrade[:extra_details][:elixir_version]}
+    """
+
+    with :ok <- File.write(Path.join(upgrade[:repo_path], ".tool-versions"), content) do
+      # update Dockerfile
+      dockerfile_content = File.read!(Path.join(upgrade[:repo_path], "Dockerfile"))
+
+      File.write(
+        Path.join(upgrade[:repo_path], "Dockerfile"),
+        String.replace(
+          dockerfile_content,
+          ~r/FROM registry\.example\.com\/engineering\/ops\/example-images\/elixir.*/,
+          "FROM registry.example.com/engineering/ops/example-images/#{upgrade[:extra_details][:docker_image]}"
+        )
+      )
+    end
+  end
+
+  def default_slack_channel do
+    "example-code-reviews"
+  end
+
+  def repos_to_upgrade(_client) do
+    MapSet.new([
+      "engineering/repo1",
+      "engineering/repo2"
+    ])
+  end
+end
+
+UpgradeRunner.run(%{
+  cmd_name: "generate_mr_upgrade_elixir_and_otp",
+  cmd_description: "Generate Merge Requests in Example Git with upgraded OTP and Elixir versions (asdf + Dockerfile)",
+  version: "1.4",
+  branch_name: String.replace(
+                       "epinault/erlang-#{otp_version}-elixir-#{elixir_version}-upgrade",
+                       ~r/[_:.]/,
+                       "-"
+                     ),
+  mr_title:  "chore: Upgrade to OTP #{otp_version} and Elixir #{elixir_version}",
+  commit_message: "chore: Upgrade to OTP #{otp_version} and Elixir #{elixir_version}",
+  slack_message: "You know what's green and ready? This upgrade for OTP #{otp_version} and Elixir #{elixir_version}. Can someone approve and merge?",
+  label: "elixir-update",
+  commit_files: [".tool-versions", "Dockerfile"],
+  otp_version: otp_version,
+  elixir_version: elixir_version,
+  docker_image: docker_image,
+})

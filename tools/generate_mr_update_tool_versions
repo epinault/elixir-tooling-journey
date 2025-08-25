@@ -1,0 +1,79 @@
+#! /usr/bin/env elixir
+
+Mix.install([
+  {:jason, "~> 1.2"},
+  {:owl, "~> 0.3"},
+  {:tesla, "~> 1.4"},
+  {:hackney, "~> 1.13"}
+])
+
+Logger.configure(level: :info)
+
+Code.require_file("generic_runner.ex")
+
+elixir_version = "1.17.3"
+erlang_version = "27.1.2"
+
+defmodule UpgradeRunner do
+  use GenericRunner
+
+  def run_upgrade(upgrade) do
+    tool_versions_path = Path.join(upgrade[:repo_path], ".tool-versions")
+    gitlab_content = Path.join(upgrade[:repo_path], ".gitlab-ci.yml")
+
+    # Read existing .tool-versions file or create a new one
+    with {:ok, current_content} <- File.read(tool_versions_path),
+         {:ok, gitlab_content} <- File.read(gitlab_content),
+         false <- String.contains?(gitlab_content, "ELIXIR_VERSION") do
+      # Update or add elixir and erlang versions
+      new_content = current_content
+        |> String.split("\n", trim: true)
+        |> Enum.reject(fn line -> String.starts_with?(line, "elixir ") || String.starts_with?(line, "erlang ") end)
+        |> Enum.concat(["elixir #{upgrade[:extra_details][:elixir_version]}", "erlang #{upgrade[:extra_details][:erlang_version]}"])
+        |> Enum.join("\n")
+        |> Kernel.<>("\n")
+
+      # Write the updated content back to the file
+      File.write!(tool_versions_path, new_content)
+    else
+      true -> {:error, "Version Overriden in the pipeline. Skipping..."}
+      error -> error
+    end
+  end
+
+  def should_process_repo(upgrade) do
+    with :ok <- remote_check_elixir_repo(upgrade),
+         {:error, _} <- remote_check_elixir_service(upgrade) do
+      :ok
+    else
+      :ok -> {:error, "Not a client repository, skipping..."}
+      error -> error
+    end
+  end
+
+
+  def repos_to_upgrade(client) do
+    {:ok, map} = GitlabClient.list_projects(client)
+
+    already_done = MapSet.new([
+      "engineering/repo1",
+      "engineering/repo2"
+    ])
+
+  MapSet.difference(MapSet.new(map), already_done)
+  end
+end
+
+UpgradeRunner.run(%{
+  cmd_name: "generate_mr_update_tool_versions",
+  cmd_description: "Generate a MR to update the tool versions to Elixir #{elixir_version} and OTP Erlang #{erlang_version}",
+  version: "1.0",
+  branch_name: "epinault/update_tool_versions_#{elixir_version}_#{erlang_version}",
+  mr_title:  "Update tool versions to Elixir #{elixir_version} and OTP Erlang #{erlang_version} [fast_merge]",
+  commit_message: "Update tool versions to Elixir #{elixir_version} and OTP Erlang #{erlang_version}",
+  no_slack: true,
+  elixir_version: elixir_version,
+  erlang_version: erlang_version,
+  label: "tool-versions update",
+  commit_files: [".tool-versions"]
+})

@@ -1,0 +1,116 @@
+#! /usr/bin/env elixir
+
+Mix.install([
+  {:jason, "~> 1.2"},
+  {:owl, "~> 0.3"},
+  {:tesla, "~> 1.4"},
+  {:hackney, "~> 1.13"}
+])
+
+Logger.configure(level: :info)
+
+Code.require_file("generic_runner.ex")
+
+package_version = "0.13.1"
+package_name = "opentelemetry_example"
+
+defmodule UpgradeRunner do
+  use GenericRunner
+
+  def run_upgrade(upgrade) do
+    package_name = upgrade[:extra_details][:package_name]
+    package_version = upgrade[:extra_details][:package_version]
+
+    with {:ok, mix_exs_content} <- File.read(Path.join(upgrade[:repo_path], "mix.exs")) do
+
+      deps = extract_package_definition(mix_exs_content, package_name)
+      if deps do
+        [_, current_version_def, rest] =
+          deps
+          |> String.trim_leading(" {")
+          |> String.trim_trailing("}")
+          |> String.split(",")
+
+        comparison_operator =
+          current_version_def
+          |> String.trim_leading(" ")
+          |> String.trim_trailing(" ")
+          |> String.replace("\"", "")
+          |> String.split(" ")
+          |> List.first()
+
+        extra =   [rest] |> List.flatten() |> Enum.map(&String.trim/1)
+        updated_deps =
+          "{:#{package_name}, \"#{comparison_operator} #{package_version}\"#{if length(extra) > 0, do: ", " <> Enum.join(extra, ", "), else: ""}}"
+
+        final_content = String.replace(
+          mix_exs_content,
+          ~r/{:#{package_name}.*}/,
+          updated_deps
+        )
+
+       with :ok <- run_mix_deps(upgrade),
+            :ok <- File.write(
+          Path.join(upgrade[:repo_path], "mix.exs"),
+          final_content
+        ) do
+          run_update_package(upgrade, package_name)
+        end
+      else
+        {:error, "No dependency found for #{package_name}"}
+      end
+    end
+  end
+
+  def run_update_package(upgrade, package_name) do
+    debug("Running mix deps.update", upgrade[:show_debug])
+
+    with {deps_update, 0} <-
+            System.shell(
+              "mix deps.update #{package_name}",
+              cd: upgrade[:repo_path]
+            ) do
+      debug("mix deps.update: #{deps_update}", upgrade[:show_debug])
+
+      :ok
+    else
+      error ->
+        {:error, "Failed to run mix deps.update #{inspect(error)}"}
+    end
+  end
+
+  def extract_package_definition(mix_exs_content, package_name) do
+    capture_deps = Regex.run(~r/{:#{package_name}.*}/, mix_exs_content)
+
+    List.first(capture_deps)
+  end
+
+  def should_process_repo(upgrade) do
+    remote_check_elixir_repo(upgrade)
+  end
+
+  def repos_to_upgrade(_client) do
+    MapSet.new([
+      "engineering/repo1",
+      "engineering/repo2 "
+    ])
+  end
+end
+
+UpgradeRunner.run(%{
+  cmd_name: "generate_mr_update_elixir_package",
+  cmd_description: "Generate Merge Requests in Example Git to update a specific package to a specific version",
+  version: "1.0",
+  branch_name: String.replace(
+                       "epinault/package-update-#{package_name}-#{package_version}",
+                       ~r/[_:.]/,
+                       "-"
+                     ),
+  mr_title:  "chore: Upgrade #{package_name} to #{package_version}",
+  commit_message: "chore: Upgrade #{package_name} to #{package_version}",
+  no_slack: true,
+  label: "package-update",
+  commit_files: ["mix.exs", "mix.lock"],
+  package_version: package_version,
+  package_name: package_name
+})

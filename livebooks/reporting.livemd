@@ -1,0 +1,321 @@
+# Reporting
+
+## Install packages
+
+```elixir
+Mix.install([
+  {:ecto, "~> 3.7"},
+  {:ecto_sql, "~> 3.7"},
+  {:postgrex, ">= 0.0.0"},
+  {:vega_lite, "~> 0.1.4"},
+  {:kino_vega_lite, "~> 0.1.2"}
+])
+```
+
+## Repos setup (works even with SDM)
+
+```elixir
+defmodule CoreReportingRepo do
+  use Ecto.Repo,
+    otp_app: :my_app,
+    adapter: Ecto.Adapters.Postgres
+end
+
+CoreReportingRepo.start_link(
+  database: "emmanuelpinault",
+  hostname: "localhost",
+  port: 15606
+)
+
+alias VegaLite, as: Vl
+```
+
+## Schema definition
+
+```elixir
+defmodule Summary do
+  use Ecto.Schema
+
+  schema "summaries" do
+    field(:object_id, :integer)
+    field(:metric_id, :integer)
+    field(:count, :integer)
+
+    timestamps()
+  end
+end
+```
+
+```elixir
+defmodule Object do
+  use Ecto.Schema
+
+  schema "objects" do
+    field(:name, :string)
+  end
+end
+
+objects = CoreReportingRepo.all(Object) |> Map.new(&{&1.id, &1.name})
+```
+
+```elixir
+defmodule Metric do
+  use Ecto.Schema
+
+  schema "metrics" do
+    field(:name, :string)
+  end
+end
+
+metrics = CoreReportingRepo.all(Metric) |> Map.new(&{&1.id, &1.name})
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Location User Report
+
+```elixir
+import Ecto.Query
+
+insert_at = DateTime.utc_now() |> DateTime.add(-(86400 * 30))
+
+data =
+  CoreReportingRepo.all(
+    from(s in Summary,
+      where: s.object_id == 5 and s.metric_id in [8, 45] and s.inserted_at > ^insert_at
+    )
+  )
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Segment Report
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 8 and s.metric_id in [2, 3, 11]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Users
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 1 and s.metric_id in [4, 8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Organization
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 2 and s.metric_id in [4, 8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Location
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 3 and s.metric_id in [4, 8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Location Segment
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 4 and s.metric_id in [4, 8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## User Group
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 6 and s.metric_id in [8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## User Group User
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 7 and s.metric_id in [8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Segment User
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(
+    from(s in Summary, where: s.object_id == 8 and s.metric_id in [9, 10, 11])
+  )
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Segment Group
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 10 and s.metric_id in [8, 10]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```
+
+<!-- livebook:{"branch_parent_index":2} -->
+
+## Business Hour
+
+```elixir
+import Ecto.Query
+
+data =
+  CoreReportingRepo.all(from(s in Summary, where: s.object_id == 11 and s.metric_id in [8, 45]))
+  |> Enum.map(fn s ->
+    %{"metric" => metrics[s.metric_id], "count" => s.count, "inserted_at" => s.inserted_at}
+  end)
+
+Vl.new(width: 600, height: 300)
+|> Vl.data_from_values(data)
+|> Vl.mark(:line)
+|> Vl.encode_field(:x, "inserted_at", type: :temporal)
+|> Vl.encode_field(:y, "count", type: :quantitative)
+|> Vl.encode_field(:color, "metric", type: :nominal)
+|> Vl.encode_field(:tooltip, "count", type: :nominal)
+```

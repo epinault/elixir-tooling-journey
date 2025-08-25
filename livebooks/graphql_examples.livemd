@@ -1,0 +1,81 @@
+#  GraphQL Examples
+
+```elixir
+Mix.install([
+  {:tesla, "~> 1.7"},
+  {:jason, "~> 1.4"}
+])
+```
+
+## Client Config
+
+```elixir
+defmodule ExampleClient do
+  use Tesla
+
+  plug(Tesla.Middleware.BaseUrl, "http://localhost:2004")
+  plug(Tesla.Middleware.Headers, [{"authorization", "mytoken"}])
+  plug(Tesla.Middleware.JSON)
+  plug(Tesla.Middleware.PathParams)
+
+  def continuous_post(body, options \\ []) do
+    count = Keyword.get(options, :count, 100)
+    sleep_in_ms = Keyword.get(options, :sleep, 200)
+
+    Enum.reduce_while(1..count, 0, fn i, acc ->
+      if i == 10_000_000 do
+        {:halt, acc}
+      else
+        ExampleClient.post("/graphql", body)
+        :timer.sleep(sleep_in_ms)
+        {:cont, acc + i}
+      end
+    end)
+  end
+
+  def response({:ok, %Tesla.Env{status: 200, body: body}}), do: body
+end
+```
+
+## UsersByUids
+
+```elixir
+body = %{
+  query: "
+    query UsersByUids($uids: [ID]!) {
+      usersByUids(uids: $uids) {
+        users {
+          archived
+          archivedAt
+          avatarUrl
+          assignedLocationsCount
+          bio
+          countryCodes
+          createdAt
+          createdBy
+          email
+          firstName
+          fullName
+          handle
+          hasAcceptedLatestTerms
+          insertedAt
+          jobTitle
+          lastEmailTime
+          lastModifiedAt
+          lastName
+        }
+      }
+    }
+  ",
+  variables: """
+  {
+    "uids": ["018ee3aa-ee3b-71f4-b1ea-2ce52b51cd8a"],
+    "searchInput": {}
+  }
+  """
+}
+
+"/graphql" |> ExampleClient.post(body) |> ExampleClient.response()
+```
+
+

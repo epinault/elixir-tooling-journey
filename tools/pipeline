@@ -1,0 +1,321 @@
+#! /usr/bin/env elixir
+
+Mix.install([
+  {:httpoison, "~> 1.8"},
+  {:jason, "~> 1.2"},
+  {:owl, "~> 0.3"}
+])
+
+options_args = [
+  environment: :string,
+  command: :string,
+  token: :string,
+  var: [:string, :keep],
+  help: :boolean,
+  version: :boolean
+]
+
+options_args_aliases = [
+  e: :environment,
+  c: :command,
+  t: :token,
+  v: :version,
+  h: :help
+]
+
+defmodule PipelineRunner do
+  def run(parsed_args, rest) do
+    with {:ok, project_details} <- parse_and_validate_service(rest),
+         {:ok, token} <- parse_and_validate_token(parsed_args),
+         {:ok, environment} <- parse_and_validate_environment(parsed_args),
+         {:ok, variables} <-
+           build_variables(
+             project_details,
+             environment,
+             parsed_args[:command],
+             Keyword.get_values(parsed_args, :var)
+           ),
+         {:ok, pipeline} <- create_pipeline(token, project_details, variables) do
+      wait_for_pipeline_status(token, project_details, pipeline)
+    end
+  end
+
+  defp parse_and_validate_service(rest) do
+    service = List.first(rest)
+
+    case service do
+      nil ->
+        Owl.IO.puts(Owl.Data.tag("Missing required SERVICE_NAME argument", :red))
+        :error
+
+      _ ->
+        all_projects = projects()
+
+        case Map.fetch(projects(), String.to_atom(service)) do
+          {:ok, val} ->
+            {:ok, val}
+
+          _ ->
+            valid_values = all_projects |> Map.keys() |> Enum.join(", ")
+
+            Owl.IO.puts(
+              Owl.Data.tag("Invalid SERVICE_NAME specified. Must be one of #{valid_values}", :red)
+            )
+
+            :error
+        end
+    end
+  end
+
+  defp parse_and_validate_token(parsed_args) do
+    case parsed_args[:token] do
+      nil ->
+        default_path = default_token_file_path()
+
+        with {:ok, _} <- File.stat(default_path),
+             {:ok, data} <-
+               File.read(default_path) do
+          {:ok, String.trim(data)}
+        else
+          error ->
+            Owl.IO.puts(
+              Owl.Data.tag(
+                "No token specified and could not find #{default_path}.. Please specify a token with -t #{inspect(error)}",
+                :red
+              )
+            )
+
+            :error
+        end
+
+      _ ->
+        {:ok, parsed_args[:token]}
+    end
+  end
+
+  defp parse_and_validate_environment(parsed_args) do
+    environment = String.to_atom(parsed_args[:environment] || "us")
+    all_environments = environments()
+
+    case Map.fetch(all_environments, environment) do
+      {:ok, val} ->
+        {:ok, val}
+
+      _ ->
+        valid_values = all_environments |> Map.keys() |> Enum.join(", ")
+
+        {:error, "Invalid environment specified (#{environment}). Must be one of #{valid_values}"}
+    end
+  end
+
+  defp build_variables(project_details, environment, command, extra_env_vars) do
+    variables =
+      if project_details[:rake_task] do
+        [
+          %{
+            "key" => "RAKE_TASK_ENV",
+            "variable_type" => "env_var",
+            "value" => environment
+          },
+          %{"key" => "RAKE_TASK", "variable_type" => "env_var", "value" => command}
+        ]
+      else
+        [
+          build_variable("MIX_TASK_ENV", environment),
+          build_variable("MIX_TASK", command)
+        ]
+      end
+
+    variables =
+      Enum.reduce(extra_env_vars, variables, fn var, acc ->
+        [name, value] = String.split(var, "=")
+        [build_variable(name, value) | acc]
+      end)
+
+    {:ok, variables}
+  end
+
+  defp build_variable(name, value, type \\ "env_var") do
+    %{
+      "key" => name,
+      "variable_type" => type,
+      "value" => value
+    }
+  end
+
+  defp create_pipeline(token, project_details, variables) do
+    Owl.Spinner.run(
+      fn ->
+        uri = base_url() <> "/#{project_details[:gitlab_id]}" <> "/pipeline"
+        headers = [{"PRIVATE-TOKEN", token}, {"Content-Type", "application/json"}]
+        body = Jason.encode!(%{ref: "refs/heads/master", variables: variables})
+
+        case HTTPoison.post(uri, body, headers) do
+          {:ok, %{status_code: code} = resp} when code == 201 ->
+            {:ok, Jason.decode!(resp.body)}
+
+          {:ok, resp} ->
+            {:error, "Failed to create pipeline. #{resp.body} "}
+
+          error ->
+            {:error, "Failed to create pipeline. REASON: #{inspect(error)}"}
+        end
+      end,
+      labels: [
+        processing: "Creating pipeline…",
+        ok: fn pipeline_details ->
+          " Created pipeline #{pipeline_details["id"]} (#{pipeline_details["web_url"]})!"
+        end,
+        error: fn error ->
+          error
+        end
+      ]
+    )
+  end
+
+  defp wait_for_pipeline_status(token, project_details, pipeline_details) do
+    Owl.Spinner.run(
+      fn ->
+        check_status(fn ->
+          uri =
+            base_url() <>
+              "/#{project_details[:gitlab_id]}" <> "/pipelines/#{pipeline_details["id"]}"
+
+          headers = [{"PRIVATE-TOKEN", token}, {"Content-Type", "application/json"}]
+
+          HTTPoison.get(uri, headers)
+        end)
+      end,
+      labels: [
+        ok: " Successfully run your pipeline. See results at #{pipeline_details["web_url"]} .",
+        processing: " Waiting for pipeline to complete …",
+        error: " Failed to run your pipeline. See results at #{pipeline_details["web_url"]} ."
+      ]
+    )
+  end
+
+  defp check_status(fun) do
+    case fun.() do
+      {:ok, resp} ->
+        body = Jason.decode!(resp.body)
+
+        cond do
+          body["status"] == "failed" ->
+            {:error, "Pipeline failed. You can check the logs at #{body["web_url"]}"}
+
+          body["status"] != "success" ->
+            Process.sleep(1000)
+            check_status(fun)
+
+          true ->
+            :ok
+        end
+
+      _ ->
+        check_status(fun)
+    end
+  end
+
+  def default_token_file_path() do
+    Path.join([System.get_env("HOME"), ".example", "gitlab.token"])
+  end
+
+  defp projects do
+    # FIXME To pick dynamic list from a group in Gitlab
+    %{
+      anakin: %{
+        gitlab_id: 142,
+        mix_task: true
+      },
+      arth0: %{
+        gitlab_id: 210,
+        mix_task: true
+      },
+      azeroth: %{
+        gitlab_id: 149,
+        mix_task: true
+      },
+      core_reporting: %{
+        gitlab_id: 1411,
+        mix_task: true
+      },
+      data_privacy: %{
+        gitlab_id: 6340,
+        mix_task: true
+      },
+      gringotts: %{
+        gitlab_id: 229,
+        mix_task: true
+      },
+      halberd: %{
+        gitlab_id: 113,
+        mix_task: true
+      },
+      palantir: %{
+        gitlab_id: 94,
+        mix_task: true
+      },
+      crm: %{
+        gitlab_id: 7087,
+        mix_task: true
+      },
+      vader: %{
+        gitlab_id: 843,
+        mix_task: true
+      }
+    }
+  end
+
+  defp base_url do
+    "https://example.com/api/v4/projects"
+  end
+
+  defp environments do
+    %{
+      us: "prod-usw2-kubernetes",
+      au: "prod-apse2-k8s-main",
+      uspay: "prod-usw2-payments"
+    }
+  end
+end
+
+{parsed_args, rest} =
+  OptionParser.parse!(System.argv(), aliases: options_args_aliases, strict: options_args)
+
+if parsed_args[:help] do
+  help_msg = """
+  Run a pipeline (mix or rake tasks) for a ruby/elixir project
+
+  ## usage:
+
+      pipeline [OPTIONS] PROJECT
+
+  ## Options
+
+      -e, --environment       Specify the Gitlab Environment to use. Must be one of [:us, :au, :uspay]. [Default: :us]
+      -c, --command           The mix/rake task to run on the project
+      -t, --gitlab-token      Specify your personal Gitlab Token. [Default token is read from #{PipelineRunner.default_token_file_path()}]
+      --var                   Extra ENV var to set along with the command. MIX_TASK, MIX_TASK_ENV are already handled for you
+      -v, --version           Print version of this script
+      -h, --help              This help
+  """
+
+  Owl.IO.puts(help_msg)
+  exit({:shutdown, 0})
+end
+
+if parsed_args[:version] do
+  Owl.IO.puts("version: 1.0.3")
+  exit({:shutdown, 0})
+end
+
+case PipelineRunner.run(parsed_args, rest) do
+  :error ->
+    exit({:shutdown, 1})
+
+  {:error, _error} ->
+    exit({:shutdown, 1})
+
+  _ ->
+    Owl.IO.puts("")
+end
