@@ -1,0 +1,148 @@
+.allowed_fast_merge:
+  <<: *test-default
+  variables:
+    GIT_STRATEGY: clone
+    GIT_CHECKOUT: "an"
+    GIT_DEPTH: 0
+  image: registry.example.com/elixir:1.17.3
+  script:
+    - |
+      cd ${CI_PROJECT_DIR}
+      cat <<EOF > allowed_list_script
+      #! /usr/bin/env elixir
+      require Logger
+
+      # Those path are regex patterns allowed
+      allowed_paths = [
+        ".tool-versions",
+        "guides/getting-started.md",
+        "guides/.*",
+        ".gitlab\/.*",
+        "README.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "cortex.yaml",
+        "renovate.json",
+        "values-.*.yaml",
+        ".cursorrules",
+        ".windsurfrules",
+        "OPINIONS.md",
+        ".sobelow-conf"
+      ]
+
+      ci_commit = System.get_env("CI_COMMIT_SHA")
+
+      Logger.info("Looking at commit #{ci_commit}")
+      case System.shell("git diff --name-only origin/master HEAD") do
+        {file_changed, 0} ->
+          result =
+            file_changed
+            |> String.split("\n")
+            |> Enum.reject(fn p -> p == "" end)
+            |> Enum.all?(fn path ->
+              val = Enum.any?(allowed_paths, fn allowed ->
+                Regex.match?(~r|#{allowed}|, path)
+              end)
+
+              unless val do
+                Logger.error("Path #{path} not allowed to fast merge")
+              end
+
+              val
+            end)
+
+          if file_changed != "" && result do
+            exit(:shutdown)
+          else
+            Logger.error("One or more files in this merge request is not allowed. See above logs for details")
+            exit(1)
+          end
+
+        error ->
+          Logger.error("Failed to run git show: #{inspect(error)}")
+          exit(1)
+      end
+      EOF
+      chmod u+x allowed_list_script
+      ./allowed_list_script
+
+.update_dashwork:
+  stage: autodocs_generate
+  allow_failure: true
+  interruptible: true
+  variables:
+    GIT_STRATEGY: clone
+    GIT_CHECKOUT: "an"
+    GIT_DEPTH: 0
+  image: registry.example.com/elixir:1.17.3
+  script:
+    - |
+      cd ${CI_PROJECT_DIR}
+
+      cat <<EOF > update_pattern
+      #! /usr/bin/env elixir
+
+      Mix.install([
+        {:req, "~> 0.5.7"},
+        {:jason, "~> 1.4"},
+        {:uniq, "~> 0.6.1"}
+      ])
+
+      require Logger
+
+      token = System.get_env("DASHWORK_TOKEN")
+      slug_path = System.get_env("CI_PROJECT_PATH_SLUG")
+      project_path = System.get_env("CI_PROJECT_PATH")
+      patterns_path = Path.wildcard("./guides/**/*.md")
+
+      Enum.each(patterns_path, fn pattern_path ->
+        filename = String.replace(pattern_path, "./guides/", "")
+        content =  File.read!(pattern_path)
+        title_match = Regex.scan(~r/^# (.+)/, content)
+
+        case title_match do
+          [title] ->
+            document_id = Uniq.UUID.uuid5(nil , slug_path <> "-" <> filename)
+            url = "https://autodocs.podium.com/" <> project_path <> "/" <> String.replace(Path.basename(filename), ".md", ".html")
+
+            req = Req.new(url: "https://api.dashworks.ai/v1/documents",
+                          method: :put,
+                          auth: {:bearer, token},
+                          headers: [{"Content-Type","application/json"}] ,
+                          body: Jason.encode!(%{
+                            connection_id: "10205417",  # integration connection id for this custom integration
+                            document_id: document_id,
+                            title: title,
+                            content: content,
+                            url: url,
+                          }))
+            resp = Req.put!(req)
+            cond do
+              resp.status < 300 ->
+                Logger.info("Updated successfuly (#{resp.status}) #{title} (#{document_id}")
+              resp.status == 429 ->
+                Logger.info("Rate limited (#{resp.status}) #{title} (#{document_id}")
+                now = DateTime.utc_now()
+                next_minute = %{now | second: 0, microsecond: {0, 0}} |> DateTime.add(1, :minute)
+                seconds_to_wait = DateTime.diff(next_minute, now, :second) + 2
+                Process.sleep(seconds_to_wait * 1000)
+                new_resp = Req.put!(req)
+
+                if new_resp.status < 300 do
+                  Logger.info("Updated successfuly (#{new_resp.status}) #{title} (#{document_id}")
+                else
+                  Logger.info("Failed to update(#{new_resp.status}) #{title} (#{document_id}")
+                end
+              true ->
+              Logger.info("Failed to update(#{resp.status}) #{title} (#{document_id}")
+            end
+          _ ->
+            Logger.error("No valid title found in #{pattern_path}. Must be in the format: # Title")
+          end
+      end)
+
+      EOF
+      chmod u+x update_pattern
+      ./update_pattern
+  tags:
+    - dockerindocker
