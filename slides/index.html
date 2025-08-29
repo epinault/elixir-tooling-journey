@@ -36,7 +36,7 @@
                         ## About Me
 
                         - **@epinault** on GitHub
-                        - Elixir since 2017
+                        - Elixir since 2016
                         - **Podium** - 4+ years, 80+ Elixir services in production, 5+ OSS projects
                         - **OSS Maintainer** - Hammer, Geocoder, BEAM community projects
 
@@ -242,7 +242,6 @@
                         |------|----------|------------------|-----------|
                         | **Plain** | No distribution | ✅ Yes | Small |
                         | **Escript** | Team sharing | ✅ Yes | Small |
-                        | **Bakeware** | Self-contained | ❌ No | Medium |
                         | **Burrito** | True standalone | ❌ No | Large |
 
                         ### When to use each:
@@ -264,7 +263,7 @@
 
                         - ⚡ **No framework overhead** - Pure Elixir, immediate execution
                         - 🎯 **Exact solution fit** - Build precisely what your team needs
-                        - 🔀 **Multi-repo orchestration** - Handle complex workflows across services
+                        - 🔀 **Code smart patching** - Handle complex code changes using the AST
 
                         ---
 
@@ -279,7 +278,6 @@
                         - **Long-running processes** - Stays alive, handles state
                         - **Background processing** - Reliable job queues with Oban, Task.async, Flow, etc.
                         - **Full Application lifecycle** - Supervision trees, fault tolerance
-                        - **Database integration with Ecto** - Persistent data storage
 
                         ---
 
@@ -356,24 +354,13 @@
 
                         ---
 
-                        ## Performance Comparison
-
-                        ### When Performance Matters:
-                        - **Livebook:** Great for exploration, not production loads
-                        - **Scripts:** Excellent for batch processing
-                        - **Simple App/Phoenix App:** Optimal for background jobs and APIs
-
-                        **Rule of thumb:** Start with simplicity, optimize when needed
-
-                        ---
-
                         ## Team Adoption
 
                         ### Introducing These Patterns:
                         1. Start with Livebook for team knowledge sharing
                         2. Automate common tasks with scripts
-                        3. Extract reusable logic into libraries (opinionated ones)
-                        4. Build user-facing features in Phoenix
+                        3. Build simple apps that can do background work (opinionated ones)
+                        4. Build user-facing features in Phoenix when you need it
 
                         ---
 
@@ -382,7 +369,7 @@
                         ### Start Where You Are:
                         - 💡 **Got an idea?** → Fire up Livebook, start exploring
                         - 🔧 **Need automation?** → Write a script, solve the immediate problem
-                        - 🏗️ **Building a service?** → Structure it as a library from day one
+                        - 🏗️ **Building a service/app?** → Structure it as a simple app from day one
                         - 👥 **Want users?** → Phoenix + LiveView for modern web apps
 
                         **Remember: Evolution over revolution**

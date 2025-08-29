@@ -1,4 +1,4 @@
-#  GraphQL Examples
+# GraphQL Examples
 
 ```elixir
 Mix.install([
@@ -77,5 +77,3 @@ body = %{
 
 "/graphql" |> ExampleClient.post(body) |> ExampleClient.response()
 ```
-
-

@@ -1,0 +1,890 @@
+# Ops Review Agent
+
+```elixir
+Mix.install([
+  {:langchain, "~> 0.3.0-rc.1"},
+  {:req, "~> 0.5.8"}
+])
+```
+
+## Configurations
+
+```elixir
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
+token = System.fetch_env!("LB_CORTEX_API_KEY")
+```
+
+```elixir
+defmodule CortexClient do
+    
+  def service_scores(service) do
+    Req.get!(client(), url: "scorecards/all/scores", params: %{"entityTag" => service}).body
+  end
+
+  def next_steps(service) do
+    dbg service
+    Req.get!(client(), url: "scorecards/all/next-steps", params: %{"entityTag" => service}).body
+  end
+
+  def metadata(service) do
+    Req.get!(client(), url: "/catalog/:service", path_params: [service: service]).body["metadata"]
+  end
+
+  # build dynamic client based on runtime arguments
+  def client do
+    token = System.fetch_env!("LB_CORTEX_API_KEY")
+    Req.new(base_url: "https://api.getcortexapp.com/api/v1", auth: {:bearer, token})
+  end
+end
+
+# CortexClient.metadata("arth0")
+```
+
+```elixir
+defmodule DataDogClient do
+  def log_count(service) do
+    Req.post!(client(), url: "/api/v2/logs/analytics/aggregate", 
+      json: %{
+        compute: [
+          %{
+            aggregation: "count"
+          }
+        ],
+        filter: %{
+          from: "now-7d",
+          indexes: [
+            "*"
+          ],
+          query: "service:#{service}*",
+          to: "now"
+        }
+      }).body
+  end
+
+  def log_count_by_status(service) do
+    Req.post!(client(), url: "/api/v2/logs/analytics/aggregate", 
+      json: %{
+        compute: [
+          %{
+            aggregation: "count"
+          }
+        ],
+        filter: %{
+          from: "now-7d",
+          indexes: [
+            "*"
+          ],
+          query: "service:#{service}*",
+          to: "now"
+        },
+        group_by: [
+        %{
+           facet: "status"
+         }
+        ]
+      }).body
+  end
+
+  def log_count_by_error_and_services(service) do
+    Req.post!(client(), url: "/api/v2/logs/analytics/aggregate", 
+      json: %{
+        compute: [
+          %{
+            aggregation: "count"
+          }
+        ],
+        filter: %{
+          from: "now-7d",
+          indexes: [
+            "*"
+          ],
+          query: "status:error service:#{service}*",
+          to: "now"
+        },
+        group_by: [
+        %{
+          facet: "status"
+        },
+        %{
+          facet: "service"
+         }
+        ]
+      }).body
+  end
+
+  def log_status_codes(service) do
+    Req.post!(client(), url: "/api/v2/logs/analytics/aggregate", 
+      json: %{
+        compute: [
+          %{
+            aggregation: "count"
+          }
+        ],
+        filter: %{
+          from: "now-7d",
+          indexes: [
+            "*"
+          ],
+          query: "service:#{service}*",
+          to: "now"
+        },
+        group_by: [
+        %{
+          facet: "@http.status_code"
+        }
+        ]
+      }).body
+  end
+
+  def log_pii(service) do
+    Req.post!(client(), url: "/api/v1/logs-queries/list", 
+      json: %{
+        query: "service:#{service}*",
+        sort: "asc",
+        time: %{
+          from: NaiveDateTime.utc_now() |> NaiveDateTime.to_iso8601() ,
+           to: NaiveDateTime.utc_now() |> NaiveDateTime.to_iso8601() ,
+          # "timezone": "America/Los_Angeles",
+        }
+      }).body
+  end
+
+  def log_duration_p99(service) do
+    Req.get!(client(), url: "/api/v1/query", 
+      params: %{
+        from: System.system_time(:second) - 7 * 86400,
+        to: System.system_time(:second),
+        query: "p99:log.duration{service:arth0-210-web}"
+      }).body
+  end
+
+  def k8_cpu_requests(service) do
+    Req.get!(client(), url: "/api/v1/query", 
+      params: %{
+        from: System.system_time(:second) - 7 * 86400,
+        to: System.system_time(:second),
+        query: "min:kubernetes.cpu.requests{service:arth0-210-web} by {container_name}"
+      }).body
+  end
+
+  def k8_cpu_limits(service) do
+    Req.get!(client(), url: "/api/v1/query", 
+      params: %{
+        from: System.system_time(:second) - 7 * 86400,
+        to: System.system_time(:second),
+        query: "min:kubernetes.cpu.limits{service:arth0-210-web} by {container_name}"
+      }).body
+  end
+
+  def k8_cpu_usage(service) do
+    Req.get!(client(), url: "/api/v1/query", 
+      params: %{
+        from: System.system_time(:second) - 7 * 86400,
+        to: System.system_time(:second),
+        query: "avg:kubernetes.cpu.usage.total{service:arth0-210-web} by {pod_name}"
+      }).body
+  end
+
+
+  def slo(service) do
+    Req.get!(client(), url: "/api/v1/slo", params: %{tags_query: "team:account-structure"})
+
+  end
+  
+  # build dynamic client based on runtime arguments
+  def client do
+    token = System.fetch_env!("LB_DATADOG_API_KEY")
+    Req.new(base_url: "https://api.datadoghq.com", headers: [{"DD-API-KEY", token},
+ {"DD-APPLICATION-KEY", "f951024b4f55168a76215535df95c239c31f0930"}])
+  end
+end
+
+      dbg ( %{
+          from: NaiveDateTime.utc_now() |> NaiveDateTime.to_iso8601() ,
+           to: NaiveDateTime.utc_now() |> NaiveDateTime.to_iso8601() ,
+          # "timezone": "America/Los_Angeles",
+        })
+DataDogClient.k8_cpu_usage("arth0")
+```
+
+## Datadog Analyzer
+
+```elixir
+defmodule DataDogAnalyzerAgent do
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Function
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+
+  def name do
+    "Report Generator"
+  end
+  
+  def create_agent(service) do
+    # Create an LLM instance
+    llm = ChatOpenAI.new!(%{
+      model: "gpt-4o",
+      temperature: 0
+    })
+
+    # Create a prompt template
+    template = """
+    You are an expert Datadog analyst specializing in performance monitoring and anomaly detection. 
+    You will analyze logs aggregates data, metrics aggregate, and time-series data to identify operational patterns and issues.
+    
+    Given the following Datadog query results and metrics:
+      * log count
+      * log count by status
+      * log count of errors by deployment 
+      * log count of request by HTTP Status
+
+    When you do not have the needed information, please be clear that you cannot analyze as you do not have the needed data
+    
+    Please perform the following analysis:
+    
+    1. Metric Analysis
+    - Analyze aggregate statistics for:
+      * CPU utilization patterns (avg, p95, max)
+      * Memory usage trends
+      * Custom service metrics
+    - Identify any metrics exceeding defined thresholds
+    - Compare current values against historical baselines
+    
+    2. Log Pattern Analysis
+    - Review log volume patterns and anomalies such as error, http status errors
+    - Identify error rate spikes and common error patterns
+    - Analyze log severity distribution
+    - Extract key patterns from log messages
+    - Correlate logs with metric spikes
+    
+    3. Time-Series Investigation
+    - Detect anomalies in time-series data using:
+      * Deviation from moving averages
+      * Sudden spikes or drops
+      * Seasonal pattern violations
+      * A maximum of 500ms for the P99
+    - Identify correlation between different metrics
+    - Flag unusual patterns in service behavior
+    
+    4. Aggregation Analysis
+    - Review count, sum, avg, percentile aggregations
+    - Compare aggregations across different time windows
+    - Identify statistically significant changes
+    - Analyze cardinality of grouped metrics
+    
+    Output Format:
+    
+    Key Findings: 
+    List major observations and anomalies
+
+    Detailed Analysis:
+    Break down each significant pattern
+    
+    Recommendations: 
+    Suggest monitoring improvements and fixes
+    
+    Query Suggestions: 
+    Propose refined Datadog queries for deeper investigation
+
+    Logs:
+    * What is the volume of logs for the last 7 days?
+    * Any concerning spike of logs in the last 7 days?
+    * Any new Errors?
+    * Any new Warnings?
+    * Are logs showing PII or sensitive Data?
+    
+    Performance Concerns 
+    * Any slow requests using P95 metrics? Answer yes or no, in case of yes, specify which ones
+    * Any unusual spike in traffic? Answer yes or no, in case of yes, specify which per service
+
+    Kubernetes resources concerns
+    * What does the CPU usage look like compare to Request?
+    * What does the CPU usage look like compare to Limit?
+    * What does the Memory usage look like compare to Request?
+    * What does the Memory usage look like compare to Limit?
+    * Any Pod restarted? for what reason?
+    
+    Please focus on actionable insights and patterns that could impact service reliability or performance.
+    """
+
+    # Create the chain
+    LLMChain.new!(%{
+      llm: llm,
+      custom_context: %{service: service},
+      verbose: true
+    })     
+    |> LLMChain.add_message(Message.new_system!(template))
+  end
+
+  def log_count() do
+    Function.new!(%{
+      name: "log_count",
+      description: "Return JSON object of the log counts overall for a service.",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(DataDogClient.log_count(service))}
+      end
+    })
+  end
+
+  def log_count_by_status() do
+    Function.new!(%{
+      name: "log_count_by_status",
+      description: "Return JSON object of the log counts by status for a service.",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(DataDogClient.log_count_by_status(service))}
+      end
+    })
+  end
+
+  def log_count_by_error_and_services() do
+    Function.new!(%{
+      name: "log_count_by_error_and_services",
+      description: "Return JSON object of the log counts by status by deployment for a service.",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(DataDogClient.log_count_by_error_and_services(service))}
+      end
+    })
+  end
+
+  def log_status_codes() do
+    Function.new!(%{
+      name: "log_status_codes",
+      description: "Return JSON object of the log counts by HTTP status code for a service. This is useful to detect request that have errors",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(DataDogClient.log_status_codes(service))}
+      end
+    })
+  end
+
+  def log_duration_p99() do
+    Function.new!(%{
+      name: "log_duration_p99",
+      description: "Return JSON object of the timeseries for the p99 requests duration for a service",
+      function: fn _args, %{service: service} = _context ->
+        {:ok, Jason.encode!(DataDogClient.log_duration_p99(service))}
+      end
+    })
+  end
+
+  def k8_cpu_requests() do
+    Function.new!(%{
+      name: "k8_cpu_requests",
+      description: "Return JSON object of the timeseries for the CPU Requests usage for a service",
+      function: fn _args, %{service: service} = _context ->
+        {:ok, Jason.encode!(DataDogClient.k8_cpu_requests(service))}
+      end
+    })
+  end
+
+  def k8_cpu_limits() do
+    Function.new!(%{
+      name: "k8_cpu_limits",
+      description: "Return JSON object of the timeseries for the CPU Limits usage for a service",
+      function: fn _args, %{service: service} = _context ->
+        {:ok, Jason.encode!(DataDogClient.k8_cpu_limits(service))}
+      end
+    })
+  end
+
+  def k8_cpu_usage() do
+    Function.new!(%{
+      name: "k8_cpu_usage",
+      description: "Return JSON object of the timeseries for the CPU actual usage for a service",
+      function: fn _args, %{service: service} = _context ->
+        {:ok, Jason.encode!(DataDogClient.k8_cpu_usage(service))}
+      end
+    })
+  end
+  
+  def chat(agent, input) do   
+    agent
+    |> LLMChain.add_message(Message.new_user!(input))
+    |> LLMChain.add_tools([
+      log_count(), 
+      log_count_by_status(), 
+      log_count_by_error_and_services(),
+      log_status_codes(),
+      log_duration_p99(),
+  
+    ])    
+    |> LLMChain.run( 
+      input: input,
+      mode: :while_needs_response
+    )
+  end
+
+  def test_agent(input, service) do
+    agent = create_agent(service)
+    chat(agent, input)
+  end
+end
+
+{:ok, resp} = DataDogAnalyzerAgent.test_agent("Gather information and analyze service Arth0", "arth0")
+IO.puts(resp.last_message.content)
+```
+
+<!-- livebook:{"branch_parent_index":0} -->
+
+## Cortex Analyzer
+
+```elixir
+defmodule CortexAnalyzerAgent do
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Function
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+
+  def name do
+    "Report Generator"
+  end
+  
+  def create_agent(service) do
+    # Create an LLM instance
+    llm = ChatOpenAI.new!(%{
+      model: "gpt-4o",
+      temperature: 0
+    })
+
+    # Create a prompt template
+    template = """
+    You are a specialized senior software engineer agent responsible for service by analyzing Cortex scorecards and rules.
+    Your primary tasks are:
+  
+    1. Analyze the scorecard data to:
+       - Identify the overall service state
+  
+    2. Review rules that need work by:
+       - Finding rules in violation
+       - Identifying rules that are close to violation thresholds
+       - Prioritizing rules based on severity and impact
+       - Suggest how you can fix it 
+  
+    When gathering information, focus on:
+    - Service health metrics
+    - Technical debt indicators
+    
+    Based on the above information, please:
+    1. Summarize the current state of the scorecard
+    2. List all rules that need immediate attention
+    3. Provide a prioritized list of actions needed
+    4. Packages that needs updating
+    5. Feature flags that might need to be removed
+  
+    Format your response as:
+    SCORECARD SUMMARY: 
+    * Level: [current level]
+    * Test Coverage: [Code Coverage]
+    * [Summary of current state]
+  
+    CRITICAL RULES:
+    [List of rules needing immediate attention]
+  
+    RECOMMENDED ACTIONS:
+    [Prioritized list of actions]
+
+
+    Cortex checks:
+    * Any check that needs to be fixed? 
+    * Any upcoming checks we should look out for?
+    """
+
+    # Create the chain
+    LLMChain.new!(%{
+      llm: llm,
+      custom_context: %{service: service},
+      verbose: false
+    }) 
+    |> LLMChain.add_message(Message.new_system!(template))
+  end
+
+  def scorecard_scores() do
+    Function.new!(%{
+      name: "scorecard_scores",
+      description: "Return JSON object of the Scorecard scores for a service/entity such as last evaluated, rules exemptions, summary",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(CortexClient.service_scores(service))}
+      end
+    })
+  end
+  
+  def next_steps_for_entity() do
+    Function.new!(%{
+      name: "next_steps_for_service",
+      description: "Return JSON object of the next steps for a service/entity. It should have the current level and the list of failing rules information.",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(CortexClient.next_steps(service))}
+      end
+    })
+  end
+
+  def metadata() do
+    Function.new!(%{
+      name: "metadata",
+      description: "Return JSON object of the metadat for a service such as code coverage, package updates state, feature flags state.",
+      function: fn _args, %{service: service} = _context ->
+        # This uses the user_id provided through the context to call our Elixir function.
+        {:ok, Jason.encode!(CortexClient.metadata(service))}
+      end
+    })
+  end
+  
+  def chat(agent, input) do   
+    agent
+    |> LLMChain.add_message(Message.new_user!(input))
+    |> LLMChain.add_tools([scorecard_scores(), next_steps_for_entity(), metadata()])
+    # keep running the LLM chain against the LLM if needed to evaluate
+    # function calls and provide a response.
+    |> LLMChain.run( 
+      input: input,
+      mode: :while_needs_response
+      # mode: :until_success
+    )
+  end
+
+  def test_agent(input, service) do
+    agent = create_agent(service)
+    chat(agent, input)
+  end
+end
+
+{:ok, resp} = CortexAnalyzerAgent.test_agent("Gather and analyze the score for service Arth0", "arth0")
+IO.puts(resp.last_message.content)
+```
+
+## Reviewer
+
+```elixir
+defmodule ReviewerAgent do
+  alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+
+  def name do
+    "Report Generator"
+  end
+  
+  def create_agent(state) do
+    # Create an LLM instance
+    llm = ChatOpenAI.new!(%{
+      model: "gpt-4o",
+      temperature: 0
+    })
+
+    # Create a prompt template
+    template = """
+    You are the Orchestrator agent. Your task is to coordinate the interaction 
+    between all agents to create high-quality operations reviews of a service running at Podium
+
+    Current State:
+    #{inspect(state)}
+
+    Available agents:
+    * Cortex Analyzer - Gather Cortex scorecard information and rules state
+    * DataDog Analyzer - Gather metrics from logs, CPU, memory metrics for difference pieces of a service such as web pod, background workers
+    * Reviewer - Reviews the data and suggest actions items 
+    * Report Generator - Create an operational review report on the selected service
+
+    Decision Guidelines:
+    - Analyze the current state and quality of outputs to decide the next best action
+    - You can choose any agent at any time based on need:
+        * Use Cortex Analyzer when you need better scorecard understanding or structure, it's the first agent to run
+        * Use DataDog Analyzer when you need data about logs, CPU, memory metrics
+        * Use Report Generator when DataDog Analyzer or Cortex Analyzer were run to regenerate a report
+        * Use Reviewer to suggest actions items from the Report Generator generated
+        * Choose END when the cards are comprehensive and high quality
+    
+    Examples of flexible decisions:
+    - If Cortex analysis seems incomplete, you can run Cortex Analyzer again
+    - If DataDog metrics need improvement, use Reviewer multiple times
+    - If DataDog miss important metrics, go back to DataDog Analyzer
+    - If everything looks good, choose END
+
+    Evaluate:
+    1. Do you have the current state and all the rules needing work in Cortex gathered?
+    2. Do you have all the necessary metrics to generate the final report different sections?
+    3. Is the report clear, accurate, and well-written?
+
+    Output only the next agent to run ("Topic Analyzer", "Q&A Generator", "Reviewer", or "END")
+    """
+
+    # Create the chain
+    LLMChain.new!(%{
+      llm: llm,
+    }) 
+    |> LLMChain.add_message(Message.new_system!(template))
+  end
+
+  def chat(agent, input) do   
+    agent
+    |> LLMChain.add_message(Message.new_user!(input))
+    |> LLMChain.run( 
+      input: input
+      # mode: :until_success
+    )
+  end
+end
+```
+
+## Report Generator
+
+```elixir
+defmodule ReviewerAgent do
+  alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+
+  def name do
+    "Report Generator"
+  end
+  
+  def create_agent(state) do
+    # Create an LLM instance
+    llm = ChatOpenAI.new!(%{
+      model: "gpt-4o",
+      temperature: 0
+    })
+
+    # Create a prompt template
+    template = """
+    You are an expert obsessive compulsive Report Generator agent responsible for creating comprehensive service analysis reports. You collaborate with two specialized agents:
+    
+    1. Datadog Agent: Provides raw metrics, logs, and performance data
+    2. Cortex Agent: Provides rules violation, technical debts information
+
+    Current State:
+    #{inspect(state)}
+    
+    Given the inputs from both agents:
+    
+    [DATADOG_AGENT_INPUT]
+    [CORTEX_AGENT_INPUT]
+    
+    Your role is to:
+    
+    1. Data Synthesis
+    - Combine and correlate information from both agents
+    - Identify relationships between metrics and incidents
+    - Cross-reference performance patterns with historical events
+    - Validate data consistency across sources
+    
+    2. Report Structure
+    Generate a structured report including:
+    
+    Executive Summary:
+    - Key findings and critical insights
+    - High-priority recommendations
+    - Risk assessment summary
+    
+    Detailed Analysis:
+    - Performance metrics (from Data Agent)
+      * Resource utilization
+      * Service health indicators
+      * Anomaly patterns
+    - Operational insights (from Cortex Agent)
+      * Incident patterns
+      * Alert correlations
+      * Historical context
+    
+    Recommendations:
+    - Prioritized action items
+    - Preventive measures
+    - Monitoring improvements
+    
+    3. Quality Control
+    - Ensure consistency between agent inputs
+    - Highlight any data gaps or contradictions
+    - Flag areas requiring additional investigation
+    
+    Output Format:
+    - Present findings in a clear, structured format
+    - Use markdown for formatting
+    - Include relevant charts/metrics
+    - Highlight critical information
+    - Provide context for technical details
+    
+    Please maintain professional tone and ensure all conclusions are supported by data from either agent.
+    """
+
+    # Create the chain
+    LLMChain.new!(%{
+      llm: llm,
+    }) 
+    |> LLMChain.add_message(Message.new_system!(template))
+  end
+
+  def chat(agent, input) do   
+    agent
+    |> LLMChain.add_message(Message.new_user!(input))
+    |> LLMChain.run( 
+      input: input
+      # mode: :until_success
+    )
+  end
+end
+```
+
+## Orchestrator
+
+```elixir
+defmodule OrchestratorAgent do
+  alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+
+  def create_agent(state) do
+    # Create an LLM instance
+    llm = ChatOpenAI.new!(%{
+      model: "gpt-4o",
+      temperature: 0
+    })
+
+    # Create a prompt template
+    template = """
+    You are the Orchestrator agent. Your task is to coordinate the interaction 
+    between all agents to create high-quality operations reviews of a service running at Podium
+
+    Current State:
+    #{inspect(state)}
+
+    Available agents:
+    * Cortex Analyzer - Gather Cortex scorecard information and rules state
+    * DataDog Analyzer - Gather metrics from logs, CPU, memory metrics for difference pieces of a service such as web pod, background workers
+    * Reviewer - Reviews the data and suggest actions items 
+    * Report Generator - Create an operational review report on the selected service
+
+    Decision Guidelines:
+    - Analyze the current state and quality of outputs to decide the next best action
+    - You can choose any agent at any time based on need:
+        * Use Cortex Analyzer when you need better scorecard understanding or structure, it's the first agent to run
+        * Use DataDog Analyzer when you need data about logs, CPU, memory metrics
+        * Use Report Generator when DataDog Analyzer or Cortex Analyzer were run to regenerate a report
+        * Use Reviewer to suggest actions items from the Report Generator generated
+        * Choose END when the cards are comprehensive and high quality
+    
+    Examples of flexible decisions:
+    - If Cortex analysis seems incomplete, you can run Cortex Analyzer again
+    - If DataDog metrics need improvement, use Reviewer multiple times
+    - If DataDog miss important metrics, go back to DataDog Analyzer
+    - If everything looks good, choose END
+
+    Evaluate:
+    1. Do you have the current state and all the rules needing work in Cortex gathered?
+    2. Do you have all the necessary metrics to generate the final report different sections?
+    3. Is the report clear, accurate, and well-written?
+
+    Output only the next agent to run ("Topic Analyzer", "Q&A Generator", "Reviewer", or "END")
+    """
+
+    # Create the chain
+    LLMChain.new!(%{
+      llm: llm,
+    }) 
+    |> LLMChain.add_message(Message.new_system!(template))
+  end
+
+  def chat(agent, input) do   
+    agent
+    |> add_history()
+    |> LLMChain.add_message(Message.new_user!(input))
+    |> LLMChain.run( 
+      input: input
+      # mode: :until_success
+    )
+  end
+
+  def get_initial_state(str) do
+    %{
+        input_text: str,
+        review: "",
+        metrics: "",
+        cortex_details: "",
+        review_status: "pending"
+    }
+  end
+  
+  def generate_ops_review(input) do    
+    # Initialize state
+    state = get_initial_state(input)
+    ChatMemoryBuffer.start_link() # maybe already started and we are fine with that
+    ChatMemoryBuffer.clear()
+    run(state)
+  end
+
+  def add_history(agent) do
+    memories = ChatMemoryBuffer.get()
+    Enum.reduce(memories, agent, fn memory, acc ->
+      # dbg memory
+      acc |> LLMChain.add_message(Message.new_assistant!(memory.content))
+    end)
+    agent
+  end
+  
+  def run(state) do    
+    # Let Orchestrator decide next step
+    orchestrator = create_agent(state)
+
+    {:ok, response} = chat(orchestrator,"Decide which agent to run next based on the current state.")
+
+    agent_name = response.last_message.content |> String.trim("\"")
+    dbg("Orchestrator selected: #{agent_name}")
+    run_agent(agent_name, state)
+  end
+
+  def run_agent("Cortex Analyzer", state) do
+    topics = TopicAnalyzerAgent.generate_anki_cards(state[:input_text])
+    state = Map.put(state, :topics, topics)
+
+    ChatMemoryBuffer.put("assistant", inspect(topics))
+    run(state)
+  end
+
+  def run_agent("DataDog Analyzer", state) do  
+    cards = QaGeneratorAgent.generate_anki_cards(Jason.encode!(state[:topics]))
+    state = Map.merge(state, %{
+      qa_cards: cards,
+      review_status: "needs_review"
+    })
+    ChatMemoryBuffer.put("assistant", card_to_string(cards))
+    run(state)
+  end
+
+  def run_agent("Reviewer", state) do
+    cards = ReviewerAgent.generate_review(state[:qa_cards])
+    state = Map.merge(state, %{
+      qa_cards: cards,
+      review_status: "reviewed"
+    })
+    ChatMemoryBuffer.put("assistant", card_to_string(cards))
+    run(state)
+  end
+
+  def run_agent("Report Generator", state) do
+    cards = ReviewerAgent.generate_review(state[:qa_cards])
+    state = Map.merge(state, %{
+      qa_cards: cards,
+      review_status: "reviewed"
+    })
+    ChatMemoryBuffer.put("assistant", card_to_string(cards))
+    run(state)
+  end
+  
+  def run_agent("END", state) do
+    dbg("Orchestrator decided to end the process")
+    dbg(state)
+  end
+  
+  def run_agent(value, _state) do
+    dbg("Invalid agent called #{value}")
+  end
+end
+
+OrchestratorAgent.generate_ops_review(sample_text)
+```
+
+<!-- livebook:{"offset":26530,"stamp":{"token":"XCP.Ji6R5v_wOmDQU_NQ57xjBa3ET5zu3mjUIcu33W-V7jfLXKAe5JclzNS2Cx7pmBRst3ae5vJ5TCdFYq8ksMsQL6dKoXHcKAQSnm4A4zHTEwxZdu8Xe6239nWqSOk0_Pi1MTy6E36wALEPaXkvi7Oye4ZnjbP399MBNCmWoycaGiM","version":2}} -->
